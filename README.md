@@ -16,25 +16,31 @@ It utilizes the powerful engine of [scrcpy](https://github.com/Genymobile/scrcpy
 
 * **Cross-Platform Support (Linux, macOS, Windows)**:
   * 🐧 **Linux**: Native Debian package (`.deb`), 1-line `curl` script, taskbar integration (`StartupWMClass=dextop`), and WirePlumber/PipeWire audio routing.
-  * 🍏 **macOS**: Native Disk Image installer (`.dmg`), `dextop-mode.app` bundle, and 1-click Homebrew dependency installer.
+  * 🍏 **macOS**: 1-line `curl` script (Launchpad app), native Disk Image (`.dmg`) with `dextop-mode.app` bundle, and 1-click Homebrew dependency installer.
   * 🪟 **Windows**: Standalone 64-bit executable (`.exe`) and 1-click Winget dependency installer.
   * 🐍 **PyPI / Pip / Pipx**: `pip install dextop-mode` / `pipx install dextop-mode` for all platforms.
 * **Modern Control Center (GUI)**: A sleek CustomTkinter desktop interface in dark mode.
 * **Automated Wireless Debugging (ADB Over Wi-Fi)**:
   * Integrated **Wireless Pairing (Association)** dialog with step-by-step guidance.
+  * **QR Code pairing**: scan the code shown in DeXtop Mode, the phone is found automatically (mDNS).
   * Direct one-click Wi-Fi connection with smart IP & Port auto-filling.
+* **Audio Forwarding**:
+  * By default, the phone's audio plays on your **computer's speakers**; choose **Phone speaker** to keep the sound on the phone.
+  * On Linux, pick any output device (WirePlumber/PipeWire).
+* **Clipboard Sync**: copy on the phone, paste on the computer and vice versa (can be turned off in Settings).
 * **Display Modes & Custom DPI Scaling**:
   * Easily toggle between **Secondary Display (DeX Mode)** and **Main Display Mirroring**.
   * Customizable desktop display density (160 DPI standard desktop, 200 DPI, 240 DPI).
 * **Intelligent Power Management (Anti-Veille)**:
-  * Temporarily disables the smartphone's screen timeout (`screen_off_timeout`) while DeXtop Mode is running, and restores it automatically when closed.
-  * Prevents system sleep during usage (`systemd-inhibit` on Linux / continuous thread state on Windows).
+  * Temporarily disables the smartphone's screen timeout (`screen_off_timeout`) during a DeX session, and restores it automatically at the end (even after a lost connection, the next time the phone is detected).
+  * Prevents computer sleep during a session (`systemd-inhibit` on Linux / `caffeinate` on macOS / `SetThreadExecutionState` on Windows).
   * Turns off the physical smartphone screen to save battery and avoid screen burn-in.
+* **Clean Exit with the Power Button**: pressing the phone's power button during a DeX session cleanly stops it.
 * **Automatic & Manual One UI Gesture Repair**:
-  * Automatically refreshes and restarts the One UI Home launcher (`com.sec.android.app.launcher`) upon disconnecting to prevent back gesture freezes on Samsung smartphones.
-  * Prominent **"Repair Phone Gestures (One UI)"** button available on both the Connection and Settings tabs for 1-click manual repair anytime.
-* **Mouse & Keyboard Lock (UHID)**:
-  * Optional relative mouse capturing (UHID) for high precision control, customizable directly in the Settings tab (press `LAlt` or `Super` to release).
+  * Automatically resets DeX mode and restarts the One UI Home launcher (`com.sec.android.app.launcher`) at the end of a session to prevent back gesture freezes on Samsung smartphones.
+  * **"Repair One UI Gestures Now"** button in the Settings tab for manual repair (only if your gestures are broken).
+* **Mouse & Keyboard Capture (UHID)**:
+  * Optional mouse and keyboard capture (UHID) for high precision control, customizable in the Settings tab (press `LAlt` or `Super` to release).
 
 ---
 
@@ -75,16 +81,18 @@ curl -fsSL https://raw.githubusercontent.com/super-magistro/DeXtop-mode/main/ins
 
 ### 🍏 macOS (Apple Silicon & Intel)
 
-#### **Option A: macOS Disk Image (`.dmg`) — Recommended**
+#### **Option A: One-Line Terminal Installer — Recommended**
+Installs Homebrew (if needed), scrcpy, adb, Python-TK and DeXtop Mode, and adds **DeXtop Mode** to Launchpad (no security warning):
+```bash
+curl -fsSL https://raw.githubusercontent.com/super-magistro/DeXtop-mode/main/install_dex.sh | bash
+```
+
+#### **Option B: macOS Disk Image (`.dmg`)**
 1. Download **`dextop-mode_macOS.dmg`** from [GitHub Releases](https://github.com/super-magistro/DeXtop-mode/releases).
 2. Double-click the `.dmg` image and open **dextop-mode.app**!
 3. If `scrcpy` or `adb` are missing, **DeXtop Mode** will offer a 1-click prompt to automatically install dependencies via Homebrew.
 
-#### **Option B: One-Line Terminal Installer**
-Installs Homebrew (if needed), scrcpy, adb, Python-TK and DeXtop Mode, and adds **DeXtop Mode** to Launchpad:
-```bash
-curl -fsSL https://raw.githubusercontent.com/super-magistro/DeXtop-mode/main/install_dex.sh | bash
-```
+> **First launch:** the app is not signed by Apple, so macOS blocks it the first time. Go to **System Settings → Privacy & Security**, scroll down and click **Open Anyway** next to *dextop-mode*.
 
 ---
 
@@ -94,6 +102,8 @@ curl -fsSL https://raw.githubusercontent.com/super-magistro/DeXtop-mode/main/ins
 1. Download **`dextop-mode_windows_x64.exe`** from [GitHub Releases](https://github.com/super-magistro/DeXtop-mode/releases).
 2. Double-click **`dextop-mode_windows_x64.exe`** to launch!
 3. If `scrcpy` or `adb` are missing, **DeXtop Mode** will offer a 1-click prompt to automatically install dependencies via Winget.
+
+> **First launch:** the executable is not signed, so Windows SmartScreen may show *"Windows protected your PC"*. Click **More info → Run anyway**.
 
 ---
 
@@ -113,15 +123,14 @@ pipx install dextop-mode
 
 1. Ensure your phone and PC are on the same Wi-Fi network (or connected via USB).
 2. Open **DeXtop Mode**.
-3. **If using Wi-Fi for the first time**:
-   * Click **Pair a New Device**.
-   * On your phone, inside *Wireless Debugging*, select *Pair device with pairing code*.
-   * Enter the IP, the pairing port, and the 6-digit code shown, then click **Start Pairing**.
-4. In the main window, type the connection port shown on the phone (or plug in USB).
-5. Select your preferred **Audio** output in the Audio tab.
+3. **If using Wi-Fi for the first time**, click **Pair a New Device**, then either:
+   * **With a QR code**: click **📷 Pair with QR Code instead**, and on your phone, inside *Wireless Debugging*, select *Pair device with QR code* and scan it.
+   * **With a code**: on your phone, select *Pair device with pairing code*, enter the IP, the pairing port and the 6-digit code shown, then click **Start Pairing**.
+4. In the main window, enter the IP and connection port shown under *Wireless Debugging* and click **Connect over Wi-Fi** (or simply plug in USB).
+5. In the Audio tab, keep **Computer speakers (default)** or choose **Phone speaker (no forwarding)**.
 6. Click **Start DeX**.
    * *Your phone screen will turn off, the control GUI will hide itself, and your DeX window will pop up!*
-   * *When you close the DeX window, the control GUI will reappear.*
+   * *Close the DeX window or press the phone's power button to stop: the control GUI will reappear.*
 
 ---
 
@@ -133,7 +142,9 @@ To remove DeXtop Mode and clean up configurations:
   ```bash
   sudo apt remove dextop-mode
   ```
-* **Pip / Pipx (All OS)**:
+* **macOS (`.dmg`)**: drag **dextop-mode.app** from Applications to the Trash.
+* **Windows (`.exe`)**: delete `dextop-mode_windows_x64.exe`.
+* **Pip / Pipx / macOS one-line installer**:
   ```bash
   dextop --uninstall
   pipx uninstall dextop-mode
