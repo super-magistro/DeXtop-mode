@@ -1274,18 +1274,32 @@ class DeXtopModeApp(ctk.CTk):
                 # Check clipboard sync option (enabled by default)
                 if not self.config.get("clipboard_sync", True):
                     cmd.append("--no-clipboard-autosync")
-                # Use pty to force line-buffering in scrcpy (fixes C stdout block-buffering)
-                import pty
-                master_fd, slave_fd = pty.openpty()
-                
-                # Execute in the background synchronously in this thread
-                self.dex_process = subprocess.Popen(
-                    cmd,
-                    stdout=slave_fd,
-                    stderr=subprocess.STDOUT,
-                    close_fds=True
-                )
-                os.close(slave_fd)
+                if os.name == "posix":
+                    # Use pty to force line-buffering in scrcpy (fixes C stdout block-buffering)
+                    import pty
+                    master_fd, slave_fd = pty.openpty()
+
+                    # Execute in the background synchronously in this thread
+                    self.dex_process = subprocess.Popen(
+                        cmd,
+                        stdout=slave_fd,
+                        stderr=subprocess.STDOUT,
+                        close_fds=True
+                    )
+                    os.close(slave_fd)
+                    log_stream = os.fdopen(master_fd, 'r', errors='replace')
+                else:
+                    # Windows has no pty: read scrcpy output through a pipe instead
+                    # (the adb monitor below still detects the phone waking up)
+                    self.dex_process = subprocess.Popen(
+                        cmd,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.STDOUT,
+                        text=True,
+                        errors='replace',
+                        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)
+                    )
+                    log_stream = self.dex_process.stdout
                 
                 # Update button in GUI
                 self.after(0, lambda: self.btn_launch.configure(
@@ -1298,11 +1312,10 @@ class DeXtopModeApp(ctk.CTk):
                 # Flag to stop monitors
                 monitoring = True
 
-                # Monitor 1: scrcpy logs via pty
+                # Monitor 1: scrcpy logs (pty on Linux/macOS, pipe on Windows)
                 def log_monitor():
-                    import os as os_mod
                     try:
-                        with os_mod.fdopen(master_fd, 'r', errors='replace') as f:
+                        with log_stream as f:
                             for line in iter(f.readline, ""):
                                 if not monitoring: break
                                 if "Device screen turned on" in line or "Screen turned on" in line:
