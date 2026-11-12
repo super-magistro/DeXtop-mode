@@ -412,7 +412,7 @@ class QRPairingDialog(ctk.CTkToplevel):
         self.password = ''.join(random.choices(string.ascii_letters + string.digits, k=8))
         # Use a unique session ID as service name so concurrent sessions don't clash
         import uuid
-        self.service_name = f"DeXify-{uuid.uuid4().hex[:8]}"
+        self.service_name = f"DeXtop-{uuid.uuid4().hex[:8]}"
 
         ctk.CTkLabel(
             self, 

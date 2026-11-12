@@ -48,11 +48,13 @@ echo -n "[1/3] Removing Debian package, shortcuts & configs... "
 (
     sudo apt remove -y dextop-mode > /dev/null 2>&1 || true
     rm -f "$HOME/.local/share/applications/dextop.desktop"
+    # Leftovers from the project's former name (DeXify)
     rm -f "$HOME/.local/share/applications/mode-dex.desktop"
     rm -f "$HOME/.local/share/applications/scrcpy.desktop"
     rm -f "$HOME/.local/share/applications/scrcpy-console.desktop"
     rm -rf "$HOME/.config/dextop"
     rm -rf "$HOME/.config/dexify"
+    rm -rf "$HOME/.local/share/dexify"
 ) & spinner $!
 echo "Done!"
 
@@ -71,6 +73,11 @@ echo -n "[3/3] Removing local Python virtual environment & caches... "
     find "$DIR" -type f -name "*.pyc" -delete 2>/dev/null || true
 ) & spinner $!
 echo "Done!"
+
+# Copy of the repository cloned by the one-line installer (curl | bash)
+if [ "$DIR" = "$HOME/.local/share/dextop-mode" ]; then
+    rm -rf "$DIR"
+fi
 
 echo "=========================================="
 echo "    DeXtop Mode successfully removed!     "

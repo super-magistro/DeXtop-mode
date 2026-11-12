@@ -106,7 +106,7 @@ if [ -n "${BASH_SOURCE[0]}" ] && [ -f "$(dirname "${BASH_SOURCE[0]}")/dextop.py"
     DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 else
     # Executed via curl/pipe: clone repository locally
-    INSTALL_TARGET="$HOME/.local/share/dexify"
+    INSTALL_TARGET="$HOME/.local/share/dextop-mode"
     mkdir -p "$HOME/.local/share"
     if [ -d "$INSTALL_TARGET" ]; then
         rm -rf "$INSTALL_TARGET"
@@ -159,6 +159,8 @@ spinner() {
 echo -n "[1/5] Removing old versions... "
 (
     sudo snap remove scrcpy > /dev/null 2>&1 || true
+    # Leftovers from the project's former name (DeXify)
+    rm -rf "$HOME/.local/share/dexify" || true
     rm -f "$HOME/.local/bin/dexify-run.sh" || true
     rm -f "$HOME/.local/share/applications/mode-dex.desktop" || true
 ) & spinner $!

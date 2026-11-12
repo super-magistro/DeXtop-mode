@@ -142,6 +142,10 @@ To remove DeXtop Mode and clean up configurations:
   ```bash
   sudo apt remove dextop-mode
   ```
+* **Linux (one-line installer)** — removes the package, shortcuts, config and the installer's files:
+  ```bash
+  bash ~/.local/share/dextop-mode/uninstall.sh
+  ```
 * **macOS (`.dmg`)**: drag **dextop-mode.app** from Applications to the Trash.
 * **Windows (`.exe`)**: delete `dextop-mode_windows_x64.exe`.
 * **Pip / Pipx / macOS one-line installer**:
