@@ -4,6 +4,103 @@
 # Exit on error
 set -e
 
+# --- macOS: Homebrew + pipx installation ---
+if [ "$(uname -s)" = "Darwin" ]; then
+    echo "=========================================="
+    echo "      Installing DeXtop Mode (macOS)      "
+    echo "=========================================="
+
+    # Homebrew is required for scrcpy, adb and tkinter
+    if ! command -v brew > /dev/null 2>&1; then
+        for brew_bin in /opt/homebrew/bin/brew /usr/local/bin/brew; do
+            [ -x "$brew_bin" ] && eval "$("$brew_bin" shellenv)" && break
+        done
+    fi
+    if ! command -v brew > /dev/null 2>&1; then
+        echo "[0/4] Homebrew not found, installing it (https://brew.sh)..."
+        /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" < /dev/tty
+        for brew_bin in /opt/homebrew/bin/brew /usr/local/bin/brew; do
+            [ -x "$brew_bin" ] && eval "$("$brew_bin" shellenv)" && break
+        done
+    fi
+
+    # Homebrew's Python ships without tkinter: install the matching python-tk
+    PY_FORMULA=$(brew info --json=v2 python3 | sed -n 's/.*"name": *"\(python@[0-9.]*\)".*/\1/p' | head -1)
+    PY_VERSION=${PY_FORMULA#python@}
+    PY_BIN="$(brew --prefix)/opt/$PY_FORMULA/bin/python$PY_VERSION"
+
+    echo "[1/4] Installing dependencies (scrcpy, adb, pipx, Python-TK)..."
+    brew install scrcpy android-platform-tools pipx "$PY_FORMULA" "python-tk@$PY_VERSION"
+
+    echo "[2/4] Installing DeXtop Mode..."
+    if [ -n "${BASH_SOURCE[0]}" ] && [ -f "$(dirname "${BASH_SOURCE[0]}")/pyproject.toml" ]; then
+        SOURCE="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+    else
+        SOURCE="dextop-mode"
+    fi
+    pipx install --force --python "$PY_BIN" "$SOURCE"
+    pipx ensurepath > /dev/null 2>&1 || true
+
+    echo "[3/4] Creating the application launcher..."
+    APP_DIR="$HOME/Applications/DeXtop Mode.app"
+    rm -rf "$APP_DIR"
+    mkdir -p "$APP_DIR/Contents/MacOS" "$APP_DIR/Contents/Resources"
+    cat <<EOF > "$APP_DIR/Contents/MacOS/dextop"
+#!/bin/bash
+exec "$HOME/.local/bin/dextop" "\$@"
+EOF
+    chmod +x "$APP_DIR/Contents/MacOS/dextop"
+    printf "APPL????" > "$APP_DIR/Contents/PkgInfo"
+
+    # App icon: generate the PNG with DeXtop Mode itself, then convert it to .icns
+    ICON_PNG="$HOME/.config/dextop/icon.png"
+    DEXTOP_PY="$(pipx environment --value PIPX_LOCAL_VENVS)/dextop-mode/bin/python"
+    "$DEXTOP_PY" -c "import dextop; dextop.ensure_app_icon()" > /dev/null 2>&1 || true
+    if [ -f "$ICON_PNG" ]; then
+        ICONSET="$(mktemp -d)/dextop.iconset"
+        mkdir -p "$ICONSET"
+        for size in 16 32 128 256 512; do
+            sips -z $size $size "$ICON_PNG" --out "$ICONSET/icon_${size}x${size}.png" > /dev/null
+            sips -z $((size * 2)) $((size * 2)) "$ICON_PNG" --out "$ICONSET/icon_${size}x${size}@2x.png" > /dev/null
+        done
+        iconutil -c icns "$ICONSET" -o "$APP_DIR/Contents/Resources/dextop.icns" || true
+    fi
+
+    APP_VERSION=$("$DEXTOP_PY" -c "import dextop; print(dextop.__version__)" 2>/dev/null || echo "1.0")
+    cat <<EOF > "$APP_DIR/Contents/Info.plist"
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleName</key><string>DeXtop Mode</string>
+    <key>CFBundleDisplayName</key><string>DeXtop Mode</string>
+    <key>CFBundleIdentifier</key><string>io.github.super-magistro.dextop</string>
+    <key>CFBundleExecutable</key><string>dextop</string>
+    <key>CFBundleIconFile</key><string>dextop</string>
+    <key>CFBundlePackageType</key><string>APPL</string>
+    <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
+    <key>CFBundleShortVersionString</key><string>$APP_VERSION</string>
+    <key>CFBundleVersion</key><string>$APP_VERSION</string>
+    <key>LSApplicationCategoryType</key><string>public.app-category.utilities</string>
+    <key>LSMinimumSystemVersion</key><string>11.0</string>
+</dict>
+</plist>
+EOF
+    # Ad-hoc signature so macOS treats the bundle as a regular application
+    codesign --force --deep --sign - "$APP_DIR" > /dev/null 2>&1 || true
+
+    # Register the launcher so Spotlight / Launchpad pick it up immediately
+    /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$APP_DIR" > /dev/null 2>&1 || true
+    mdimport "$APP_DIR" > /dev/null 2>&1 || true
+
+    echo "[4/4] Done!"
+    echo "=========================================="
+    echo "      Installation successful!            "
+    echo "=========================================="
+    echo "Open 'DeXtop Mode' from Launchpad / Spotlight, or run 'dextop' in a new terminal."
+    exit 0
+fi
+
 # Dynamically get the repository directory
 if [ -n "${BASH_SOURCE[0]}" ] && [ -f "$(dirname "${BASH_SOURCE[0]}")/dextop.py" ]; then
     DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"

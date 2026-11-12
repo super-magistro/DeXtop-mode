@@ -30,7 +30,10 @@ except ImportError as e:
     elif shutil.which("dnf"):
         pkg_manager = "dnf (Fedora)"
         install_cmd = ["sudo", "dnf", "install", "-y", "python3-tkinter"]
-        
+    elif sys.platform == "darwin" and shutil.which("brew"):
+        pkg_manager = "Homebrew"
+        install_cmd = ["brew", "install", f"python-tk@{sys.version_info.major}.{sys.version_info.minor}"]
+
     if install_cmd and sys.stdin and sys.stdin.isatty():
         try:
             ans = input(f"\nWould you like to automatically install the missing package via {pkg_manager}? [Y/n] ")
@@ -1454,6 +1457,11 @@ def main():
 
         # --- macOS: remove app bundle from /Applications if present ---
         elif sys.platform == "darwin":
+            # Launcher created by install_dex.sh (pipx installation)
+            launcher_path = os.path.expanduser("~/Applications/DeXtop Mode.app")
+            if os.path.exists(launcher_path):
+                shutil.rmtree(launcher_path, ignore_errors=True)
+                print(f"Removed {launcher_path}")
             app_path = "/Applications/dextop-mode.app"
             if os.path.exists(app_path):
                 try:

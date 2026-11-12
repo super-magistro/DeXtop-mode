@@ -80,6 +80,12 @@ curl -fsSL https://raw.githubusercontent.com/super-magistro/DeXtop-mode/main/ins
 2. Double-click the `.dmg` image and open **dextop-mode.app**!
 3. If `scrcpy` or `adb` are missing, **DeXtop Mode** will offer a 1-click prompt to automatically install dependencies via Homebrew.
 
+#### **Option B: One-Line Terminal Installer**
+Installs Homebrew (if needed), scrcpy, adb, Python-TK and DeXtop Mode, and adds **DeXtop Mode** to Launchpad:
+```bash
+curl -fsSL https://raw.githubusercontent.com/super-magistro/DeXtop-mode/main/install_dex.sh | bash
+```
+
 ---
 
 ### 🪟 Windows (10 / 11)
@@ -98,6 +104,8 @@ pip install dextop-mode
 # or via pipx
 pipx install dextop-mode
 ```
+
+> **macOS note:** Homebrew's Python ships without tkinter. If DeXtop Mode reports `No module named '_tkinter'`, run `brew install python-tk@3.X` (matching your Python version) — or simply use the one-line installer above, which handles it.
 
 ---
 
