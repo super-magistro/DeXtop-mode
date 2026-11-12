@@ -82,6 +82,16 @@ elif sys.platform.startswith("win"):
         if os.path.exists(extra_path) and extra_path not in os.environ.get("PATH", ""):
             os.environ["PATH"] = extra_path + os.pathsep + os.environ.get("PATH", "")
 
+    # The windowed .exe has no console: without this flag, every adb / scrcpy call
+    # (device polling runs every 2.5s) would flash a new console window on screen.
+    _original_popen_init = subprocess.Popen.__init__
+
+    def _popen_without_console(self, *args, **kwargs):
+        kwargs.setdefault("creationflags", subprocess.CREATE_NO_WINDOW)
+        _original_popen_init(self, *args, **kwargs)
+
+    subprocess.Popen.__init__ = _popen_without_console
+
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("blue")
 
@@ -89,6 +99,16 @@ CONFIG_DIR = os.path.expanduser("~/.config/dextop")
 CONFIG_FILE = os.path.join(CONFIG_DIR, "config.json")
 ICON_FILE = os.path.join(CONFIG_DIR, "icon.png")
 SYSTEM_ICON_FILE = "/usr/share/icons/hicolor/512x512/apps/dextop.png"
+
+# Audio choices: phone sound forwarded to the computer (default), or kept on the phone
+AUDIO_COMPUTER = "Computer speakers (default)"
+AUDIO_PHONE = "Phone speaker (no forwarding)"
+# Labels saved by versions up to 1.1.4
+LEGACY_AUDIO_LABELS = {
+    "Default": AUDIO_COMPUTER,
+    "Default (system)": AUDIO_COMPUTER,
+    "Phone Only (No Audio Forwarding)": AUDIO_PHONE,
+}
 
 def get_app_icon_path():
     if os.path.exists(ICON_FILE):
@@ -461,7 +481,7 @@ class QRPairingDialog(ctk.CTkToplevel):
                 self.browser = ServiceBrowser(self.zeroconf, "_adb-tls-pairing._tcp.local.", listener=self.listener)
         except Exception as e:
             print(f"Failed to start mDNS listener: {e}")
-            self.after(0, lambda: self.status_lbl.configure(text=f"Listener Error: {e}", text_color="red"))
+            self.after(0, lambda err=str(e): self.status_lbl.configure(text=f"Listener Error: {err}", text_color="red"))
         
         # Setup ADB mDNS Poller (Fallback)
         def adb_mdns_poll():
@@ -525,7 +545,9 @@ class DeXtopModeApp(ctk.CTk):
         
         # App state
         self.connected_device = None
+        self.connected_device_name = None
         self.dex_process = None
+        self.dex_busy = False  # True from "Start DeX" until the end-of-session cleanup is done
         self.old_timeout = None
         self.is_connecting = False
         self.sinks_map = {}  # Initialized early to avoid AttributeError before refresh completes
@@ -564,7 +586,10 @@ class DeXtopModeApp(ctk.CTk):
         if os.path.exists(CONFIG_FILE):
             try:
                 with open(CONFIG_FILE, "r") as f:
-                    return json.load(f)
+                    config = json.load(f)
+                sink = config.get("selected_sink", "")
+                config["selected_sink"] = LEGACY_AUDIO_LABELS.get(sink, sink)
+                return config
             except Exception:
                 pass
         return {
@@ -732,7 +757,7 @@ class DeXtopModeApp(ctk.CTk):
         
         self.audio_dropdown = ctk.CTkOptionMenu(
             self.tab_audio,
-            values=["Default"],
+            values=[AUDIO_COMPUTER],
             command=self.on_audio_selected
         )
         self.audio_dropdown.grid(row=1, column=0, padx=10, pady=10, sticky="ew")
@@ -746,8 +771,9 @@ class DeXtopModeApp(ctk.CTk):
 
         # Audio redirection explanation
         info_txt = (
-            "DeXtop Mode uses PipeWire to redirect audio.\n"
-            "Changing the device here will update the default system output during the DeX session."
+            "By default, the phone's audio plays on this computer's speakers.\n"
+            "Choose 'Phone speaker' to keep the sound on the phone instead.\n"
+            "On Linux, the output selected here becomes the computer's default output (PipeWire)."
         )
         ctk.CTkLabel(
             self.tab_audio,
@@ -895,9 +921,12 @@ class DeXtopModeApp(ctk.CTk):
             if not self.is_connecting:
                 devices = self.get_adb_devices()
                 if devices:
-                    # Select first active device
-                    self.connected_device = devices[0]
-                    self.connected_device_name = self.get_device_model(self.connected_device)
+                    # Select first active device (only query its name when it changes)
+                    if devices[0] != self.connected_device or not self.connected_device_name:
+                        self.connected_device = devices[0]
+                        self.connected_device_name = self.get_device_model(self.connected_device)
+                    if not self.dex_busy:
+                        self.restore_pending_timeout(self.connected_device)
                     self.update_status(True, f"Connected: {self.connected_device}")
                 else:
                     self.connected_device = None
@@ -965,7 +994,8 @@ class DeXtopModeApp(ctk.CTk):
                     except Exception:
                         pass
 
-                if self.dex_process is None:
+                # Leave the button alone while a session is starting, running or cleaning up
+                if not self.dex_busy:
                     self.btn_launch.configure(state="normal", text="Start DeX", fg_color=["#3B8ED0", "#1F6AA5"])
             else:
                 self.status_indicator.configure(text="● Disconnected", text_color="#ff5555")
@@ -973,7 +1003,8 @@ class DeXtopModeApp(ctk.CTk):
                     text="No device detected. Plug in USB or connect over Wi-Fi.",
                     text_color="gray"
                 )
-                self.btn_launch.configure(state="disabled", text="Waiting for device...")
+                if not self.dex_busy:
+                    self.btn_launch.configure(state="disabled", text="Waiting for device...")
         self.after(0, gui_update)
 
     def connect_wifi(self):
@@ -1024,7 +1055,7 @@ class DeXtopModeApp(ctk.CTk):
                     self.connected_device = None
                     self.update_status(False, "Disconnected")
             except Exception as e:
-                self.after(0, lambda: messagebox.showerror("Error", f"ADB Error: {str(e)}"))
+                self.after(0, lambda err=str(e): messagebox.showerror("Error", f"ADB Error: {err}"))
                 self.connected_device = None
                 self.update_status(False, "Disconnected")
             finally:
@@ -1061,7 +1092,13 @@ class DeXtopModeApp(ctk.CTk):
                 text=True
             )
             # Input the pairing code on stdin
-            stdout, stderr = proc.communicate(input=f"{code}\n", timeout=12)
+            try:
+                stdout, stderr = proc.communicate(input=f"{code}\n", timeout=12)
+            except subprocess.TimeoutExpired:
+                # Don't leave a stuck "adb pair" process behind (e.g. wrong port / phone unreachable)
+                proc.kill()
+                proc.communicate()
+                return False, f"No answer from {ip}:{port} after 12 seconds. Check the pairing port and that both devices are on the same network."
             
             if "Successfully paired" in stdout or proc.returncode == 0:
                 # Update main IP input
@@ -1081,8 +1118,8 @@ class DeXtopModeApp(ctk.CTk):
         if not sys.platform.startswith("linux"):
             self.sinks_map = {}
             self.after(0, lambda: (
-                self.audio_dropdown.configure(values=["Default (system)", "Phone Only (No Audio Forwarding)"]),
-                self.audio_dropdown.set(self.config.get("selected_sink", "Default (system)") if self.config.get("selected_sink", "") in ["Default (system)", "Phone Only (No Audio Forwarding)"] else "Default (system)")
+                self.audio_dropdown.configure(values=[AUDIO_COMPUTER, AUDIO_PHONE]),
+                self.audio_dropdown.set(AUDIO_PHONE if self.config.get("selected_sink") == AUDIO_PHONE else AUDIO_COMPUTER)
             ))
             return
 
@@ -1110,7 +1147,7 @@ class DeXtopModeApp(ctk.CTk):
                             sinks[sink_name] = sink_id
                 
                 self.sinks_map = sinks
-                values = ["Default", "Phone Only (No Audio Forwarding)"] + list(sinks.keys())
+                values = [AUDIO_COMPUTER, AUDIO_PHONE] + list(sinks.keys())
                 
                 # Update dropdown safely
                 def update_dropdown():
@@ -1120,12 +1157,12 @@ class DeXtopModeApp(ctk.CTk):
                     if saved_sink in values:
                         self.audio_dropdown.set(saved_sink)
                     else:
-                        self.audio_dropdown.set("Default")
+                        self.audio_dropdown.set(AUDIO_COMPUTER)
                 self.after(0, update_dropdown)
             except Exception as e:
                 print(f"Error listing audio devices: {e}")
                 self.sinks_map = {}
-                self.after(0, lambda: (self.audio_dropdown.configure(values=["Default", "Phone Only (No Audio Forwarding)"]), self.audio_dropdown.set("Default")))
+                self.after(0, lambda: (self.audio_dropdown.configure(values=[AUDIO_COMPUTER, AUDIO_PHONE]), self.audio_dropdown.set(AUDIO_COMPUTER)))
                 
         threading.Thread(target=run_refresh, daemon=True).start()
 
@@ -1133,7 +1170,7 @@ class DeXtopModeApp(ctk.CTk):
         self.config["selected_sink"] = choice
         self.save_config()
         # Apply immediately via wpctl on Linux only
-        if sys.platform.startswith("linux") and choice not in ("Default", "Default (system)", "Phone Only (No Audio Forwarding)") and choice in self.sinks_map:
+        if sys.platform.startswith("linux") and choice in self.sinks_map:
             sink_id = self.sinks_map[choice]
             try:
                 subprocess.run(["wpctl", "set-default", str(sink_id)])
@@ -1175,6 +1212,34 @@ class DeXtopModeApp(ctk.CTk):
         except Exception as e:
             return False, f"Failed to repair gestures: {str(e)}"
 
+    def get_device_serial(self, device_id):
+        """Hardware serial: identifies the phone whether it is connected over USB or Wi-Fi."""
+        try:
+            return subprocess.check_output(
+                ["adb", "-s", device_id, "shell", "getprop", "ro.serialno"],
+                stderr=subprocess.DEVNULL,
+                timeout=2
+            ).decode("utf-8").strip()
+        except Exception:
+            return None
+
+    def restore_pending_timeout(self, device):
+        """Restores a screen timeout left disabled by a session that lost its connection (or crashed)."""
+        pending = self.config.get("pending_timeout_restore")
+        if not pending or self.get_device_serial(device) != pending.get("serial"):
+            return
+        try:
+            subprocess.run(
+                ["adb", "-s", device, "shell", "settings", "put", "system", "screen_off_timeout", pending["value"]],
+                check=True,
+                timeout=5
+            )
+            print(f"Restored screen timeout left over from a previous session ({pending['value']} ms).")
+            self.config.pop("pending_timeout_restore", None)
+            self.save_config()
+        except Exception as e:
+            print(f"Could not restore pending screen timeout: {e}")
+
     def manual_repair_gestures(self):
         if not self.connected_device:
             messagebox.showwarning("No Device", "Please connect a device first.")
@@ -1194,24 +1259,27 @@ class DeXtopModeApp(ctk.CTk):
 
     # --- DEX LIFECYCLE MANAGEMENT ---
     def toggle_dex(self):
-        if self.dex_process is None:
-            self.start_dex()
-        else:
+        if self.dex_process is not None:
             self.stop_dex()
+        elif not self.dex_busy:
+            self.start_dex()
 
     def start_dex(self):
         if not self.connected_device:
             return
-            
+
+        self.dex_busy = True
         self.btn_launch.configure(text="Starting up...", state="disabled")
         
         # Read parameters
         device = self.connected_device
         handle_timeout = self.config.get("timeout_handling", True)
         selected_audio = self.audio_dropdown.get()
+        display_mode = self.config.get("display_mode", "Secondary Display (DeX)")
+        dpi = self.config.get("display_dpi", "160")
         
         # Audio redirect via wpctl (Linux / PipeWire only)
-        if sys.platform.startswith("linux") and selected_audio not in ("Default", "Default (system)", "Phone Only (No Audio Forwarding)") and selected_audio in self.sinks_map:
+        if sys.platform.startswith("linux") and selected_audio in self.sinks_map:
             sink_id = self.sinks_map[selected_audio]
             try:
                 subprocess.run(["wpctl", "set-default", str(sink_id)])
@@ -1229,7 +1297,18 @@ class DeXtopModeApp(ctk.CTk):
                         
                         if not self.old_timeout or self.old_timeout == "null":
                             self.old_timeout = "60000"
-                            
+
+                        # Remember the original value on disk, so it can still be restored
+                        # if the connection is lost (or the app crashes) during the session
+                        serial = self.get_device_serial(device)
+                        pending = self.config.get("pending_timeout_restore")
+                        if pending and pending.get("serial") == serial:
+                            # Still disabled by a previous session: keep the real original value
+                            self.old_timeout = pending["value"]
+                        elif serial:
+                            self.config["pending_timeout_restore"] = {"serial": serial, "value": self.old_timeout}
+                            self.save_config()
+
                         # Disable timeout (~24 days)
                         subprocess.run(
                             ["adb", "-s", device, "shell", "settings", "put", "system", "screen_off_timeout", "2147483647"],
@@ -1243,9 +1322,6 @@ class DeXtopModeApp(ctk.CTk):
                 self.after(0, self.withdraw)
 
                 # 3. Launch Scrcpy
-                display_mode = self.config.get("display_mode", "Secondary Display (DeX)")
-                dpi = self.config.get("display_dpi", "160")
-
                 # Build arguments based on user config
                 scrcpy_cmd = [
                     "scrcpy", 
@@ -1255,7 +1331,7 @@ class DeXtopModeApp(ctk.CTk):
                     "--disable-screensaver"
                 ]
 
-                if selected_audio == "Phone Only (No Audio Forwarding)":
+                if selected_audio == AUDIO_PHONE:
                     scrcpy_cmd.append("--no-audio")
                 else:
                     scrcpy_cmd.append("--audio-codec=aac")
@@ -1277,6 +1353,12 @@ class DeXtopModeApp(ctk.CTk):
                 # Check clipboard sync option (enabled by default)
                 if not self.config.get("clipboard_sync", True):
                     cmd.append("--no-clipboard-autosync")
+                if sys.platform.startswith("win"):
+                    # Prevent system sleep while this thread runs the session (reset in cleanup)
+                    import ctypes
+                    ES_CONTINUOUS, ES_SYSTEM_REQUIRED, ES_DISPLAY_REQUIRED = 0x80000000, 0x00000001, 0x00000002
+                    ctypes.windll.kernel32.SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED | ES_DISPLAY_REQUIRED)
+
                 if os.name == "posix":
                     # Use pty to force line-buffering in scrcpy (fixes C stdout block-buffering)
                     import pty
@@ -1299,11 +1381,14 @@ class DeXtopModeApp(ctk.CTk):
                         stdout=subprocess.PIPE,
                         stderr=subprocess.STDOUT,
                         text=True,
-                        errors='replace',
-                        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)
+                        errors='replace'
                     )
                     log_stream = self.dex_process.stdout
-                
+
+                # macOS: prevent system & display sleep until scrcpy exits
+                if sys.platform == "darwin" and shutil.which("caffeinate"):
+                    subprocess.Popen(["caffeinate", "-di", "-w", str(self.dex_process.pid)])
+
                 # Update button in GUI
                 self.after(0, lambda: self.btn_launch.configure(
                     text="Stop DeX", 
@@ -1331,13 +1416,12 @@ class DeXtopModeApp(ctk.CTk):
                 threading.Thread(target=log_monitor, daemon=True).start()
 
                 # Monitor 2: Android dumpsys input_method polling
-                # 3-phase state machine:
+                # 2-phase state machine:
                 # Phase 1: Wait for screen to be ON (scrcpy has started and screen is active)
                 # Phase 2: Detect power button press (ON → OFF): reset settings, close scrcpy
-                # Phase 3: Detect unlock (OFF → ON): force-stop launcher so it restarts with screen ON (fixes gestures)
                 def adb_monitor():
                     time.sleep(3)  # Wait for scrcpy to fully initialize
-                    phase = "WAIT_ON"  # WAIT_ON → WAIT_SLEEP → WAIT_UNLOCK
+                    phase = "WAIT_ON"  # WAIT_ON → WAIT_SLEEP
                     while monitoring and self.dex_process and self.dex_process.poll() is None:
                         try:
                             output = subprocess.check_output(
@@ -1354,7 +1438,6 @@ class DeXtopModeApp(ctk.CTk):
                             elif phase == "WAIT_SLEEP":
                                 if not interactive:
                                     print("[ADB Monitor] Power button pressed. Screen ASLEEP.")
-                                    phase = "WAIT_UNLOCK"
 
                                     # Phase 2: screen is OFF — reset DeX settings and close scrcpy
                                     if display_mode == "Secondary Display (DeX)" and self.config.get("fix_oneui_gestures", True):
@@ -1367,15 +1450,6 @@ class DeXtopModeApp(ctk.CTk):
 
                                     print("[ADB Monitor] Closing scrcpy now...")
                                     self.stop_dex()
-
-                            elif phase == "WAIT_UNLOCK":
-                                if interactive:
-                                    print("[ADB Monitor] User unlocked phone. Force-stopping launcher to restore gestures...")
-                                    # Phase 3: screen is ON again — force-stop launcher so it restarts with gestures
-                                    try:
-                                        subprocess.run(["adb", "-s", device, "shell", "am", "force-stop", "com.sec.android.app.launcher"], stdout=subprocess.DEVNULL)
-                                    except Exception as e:
-                                        print(f"[ADB Monitor] Could not restart launcher: {e}")
                                     break
 
                         except Exception:
@@ -1393,14 +1467,22 @@ class DeXtopModeApp(ctk.CTk):
             finally:
                 # Cleanup
                 self.dex_process = None
-                
-                # Restore phone timeout
+
+                if sys.platform.startswith("win"):
+                    import ctypes
+                    ctypes.windll.kernel32.SetThreadExecutionState(0x80000000)  # ES_CONTINUOUS alone: allow sleep again
+
+                # Restore phone timeout (if the phone is unreachable, it stays pending in the config
+                # and is restored automatically the next time this phone is detected)
                 if handle_timeout and self.old_timeout and self.connected_device:
                     try:
                         subprocess.run(
                             ["adb", "-s", device, "shell", "settings", "put", "system", "screen_off_timeout", self.old_timeout],
-                            check=True
+                            check=True,
+                            timeout=5
                         )
+                        self.config.pop("pending_timeout_restore", None)
+                        self.save_config()
                     except Exception as e:
                         print(f"Could not restore timeout: {e}")
                 self.old_timeout = None
@@ -1415,12 +1497,16 @@ class DeXtopModeApp(ctk.CTk):
                 self.gestures_already_repaired = False
                 
                 # Restore DeXtop Mode window and reset launch button state
+                def session_done():
+                    self.dex_busy = False
+                    self.btn_launch.configure(
+                        text="Start DeX" if self.connected_device else "Waiting for device...",
+                        state="normal" if self.connected_device else "disabled",
+                        fg_color=["#3B8ED0", "#1F6AA5"],
+                        hover_color=["#2B72A5", "#144870"]
+                    )
                 self.after(0, self.deiconify)
-                self.after(0, lambda: self.btn_launch.configure(
-                    text="Start DeX", 
-                    fg_color=["#3B8ED0", "#1F6AA5"],
-                    hover_color=["#2B72A5", "#144870"]
-                ))
+                self.after(0, session_done)
                 
         threading.Thread(target=run_session, daemon=True).start()
 

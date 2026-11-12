@@ -72,7 +72,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip setuptools wheel pyinstaller
-          python -m pip install customtkinter pillow
+          python -m pip install customtkinter pillow qrcode zeroconf
 
       - name: Generate icon.png & convert to .icns
         run: |
@@ -86,7 +86,7 @@ jobs:
 
       - name: Build macOS App Bundle (.app) & package as .dmg
         run: |
-          python -m PyInstaller --noconfirm --onedir --windowed --icon dextop.icns --name "dextop-mode" dextop.py
+          python -m PyInstaller --noconfirm --onedir --windowed --icon dextop.icns --name "dextop-mode" --collect-all customtkinter --collect-all zeroconf dextop.py
           hdiutil create -volname "DeXtop Mode" -srcfolder "dist/dextop-mode.app" -ov -format UDZO "dist/dextop-mode_macOS.dmg"
 
       - name: Upload macOS DMG to GitHub Release
@@ -113,7 +113,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip setuptools wheel pyinstaller
-          python -m pip install customtkinter pillow
+          python -m pip install customtkinter pillow qrcode zeroconf
 
       - name: Generate icon.ico
         run: python generate_icon.py --ico
@@ -127,6 +127,7 @@ jobs:
             --icon icon.ico `
             --name "dextop-mode_windows_x64" `
             --collect-all customtkinter `
+            --collect-all zeroconf `
             --hidden-import PIL `
             --hidden-import PIL.ImageTk `
             dextop.py
